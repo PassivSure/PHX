@@ -29,6 +29,9 @@ def test_project_export_forwards_clear_stale_to_list_writers(monkeypatch, clear_
     connection.write_project_ventilators.assert_called_once_with(phx_project, clear_stale=clear_stale)
     connection.write_project_vent_ducting.assert_called_once_with(phx_project, clear_stale=clear_stale)
     connection.write_project_spaces.assert_called_once_with(phx_project, clear_stale=clear_stale)
+    connection.write_project_opaque_surfaces.assert_called_once_with(phx_project, clear_stale=clear_stale)
+    connection.write_project_ground.assert_called_once_with(phx_project, clear_stale=clear_stale)
+    connection.write_project_thermal_bridges.assert_called_once_with(phx_project, clear_stale=clear_stale)
 
 
 def _project_with_ventilator_and_duct() -> project.PhxProject:

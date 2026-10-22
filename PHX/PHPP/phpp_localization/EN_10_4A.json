@@ -424,6 +424,18 @@
                 "emissivity": {
                     "column": "AJ",
                     "unit": null
+                },
+                "dimension_a": {
+                    "column": "P",
+                    "unit": "M"
+                },
+                "dimension_b": {
+                    "column": "R",
+                    "unit": "M"
+                },
+                "subtraction_area": {
+                    "column": "V",
+                    "unit": "M2"
                 }
             }
         },
@@ -463,6 +475,10 @@
                 "fRsi_value": {
                     "column": "X",
                     "unit": null
+                },
+                "subtraction_length": {
+                    "column": "R",
+                    "unit": "M"
                 }
             }
         },
