@@ -547,6 +547,24 @@ class XLConnection:
         self.output(f"Reading: {_sheet_name}:{_range}")
         return self.get_sheet_by_name(_sheet_name).range(_range).value  # type: ignore
 
+    def cell_has_formula(self, _sheet_name: str, _range: str) -> bool:
+        """Return True if a single cell holds a formula rather than a typed value.
+
+        Arguments:
+        ----------
+            * _sheet_name: (str) The name of the worksheet to read from.
+            * _range: (str) The single cell to read (ie: "N246").
+
+        Returns:
+        ---------
+            * (bool): True when the cell's formula text starts with '='.
+        """
+        if ":" in _range:
+            raise XlReadException(_range)
+        self.output(f"Reading formula: {_sheet_name}:{_range}")
+        formula = self.get_sheet_by_name(_sheet_name).range(_range).formula
+        return isinstance(formula, str) and formula.startswith("=")
+
     def get_data_by_columns(self, _sheet_name: str, _range_address: str) -> list[list[xl_data.xl_range_single_value]]:
         """Returns a List of column data, each column in a list.
         ie: "A1:D12" -> [[A1, A2, ... A12], [B1, B2, ... B12], ... [D1, D2, ... D12]]

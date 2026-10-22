@@ -272,6 +272,9 @@ class FakeRange:
     def __getattr__(self, name):
         if name == "value":
             return self._compose_value()
+        if name == "formula":
+            # -- The fake holds values, not formulas: a seeded "=..." string stands in for one.
+            return self._compose_value()
         if name == "font":
             return FakeFont(self)
         raise AttributeError(name)

@@ -543,8 +543,16 @@ class PHPPConnection:
             )
         return None
 
-    def write_project_opaque_surfaces(self, phx_project: project.PhxProject) -> None:
-        """Write all of the opaque surfaces from a PhxProject to the PHPP 'Areas' worksheet."""
+    def write_project_opaque_surfaces(self, phx_project: project.PhxProject, *, clear_stale: bool = False) -> None:
+        """Write all of the opaque surfaces from a PhxProject to the PHPP 'Areas' worksheet.
+
+        Arguments:
+        ----------
+            * phx_project (project.PhxProject): The PhxProject to write.
+            * clear_stale (bool): Clear filled surface rows left below the written block
+                (a previous export's, or a template's example building). Default=False,
+                which only warns.
+        """
 
         surfaces: list[areas_surface.SurfaceRow] = []
         for phx_variant in phx_project.variants:
@@ -566,7 +574,7 @@ class PHPPConnection:
             pass
 
         phpp_surfaces_rows_sorted = sorted(surfaces, key=lambda x: x.phx_polygon.display_name.lower())
-        self.areas.write_surfaces(phpp_surfaces_rows_sorted)
+        self.areas.write_surfaces(phpp_surfaces_rows_sorted, clear_stale=clear_stale)
 
         # -- Configure summary rows for any custom groups that were used.
         # WHY: Custom groups 12-14 need their temperature zone letter set in the
@@ -591,12 +599,18 @@ class PHPPConnection:
                 used.add((surface.phpp_group_number_int, letter, desc))
         return used
 
-    def write_project_ground(self, phx_project: project.PhxProject) -> None:
+    def write_project_ground(self, phx_project: project.PhxProject, *, clear_stale: bool = False) -> None:
         """Write the foundation to building section 1 of the PHPP 'Ground' worksheet.
 
         One foundation per variant: 'Ground!H18' reads the single 'Areas' floor-slab
         total, so a second foundation written into section 2 would count its floor
         area twice. Multi-section support needs that 'Areas' total split per foundation.
+
+        Arguments:
+        ----------
+            * phx_project (project.PhxProject): The PhxProject to write.
+            * clear_stale (bool): For a variant with no foundation, clear a floor-slab type
+                the workbook already selects (and its perimeter). Default=False, which only warns.
         """
         if self.easyPh:
             return None
@@ -604,9 +618,9 @@ class PHPPConnection:
         for variant in phx_project.variants:
             # TODO: How to handle multiple variants?
 
-            if not variant.phius_cert.ph_building_data:
-                continue
-            if not (foundations := variant.phius_cert.ph_building_data.foundations):
+            building_data = variant.phius_cert.ph_building_data
+            if not (foundations := building_data.foundations if building_data else None):
+                self.ground.warn_or_clear_floor_slab_selection(clear_stale)
                 continue
 
             if not self.shape.GROUND.input_block:
@@ -630,8 +644,15 @@ class PHPPConnection:
             )
         return None
 
-    def write_project_thermal_bridges(self, phx_project: project.PhxProject) -> None:
-        """Write all of the thermal-bridge elements of a PhxProject to the PHPP 'Areas' worksheet."""
+    def write_project_thermal_bridges(self, phx_project: project.PhxProject, *, clear_stale: bool = False) -> None:
+        """Write all of the thermal-bridge elements of a PhxProject to the PHPP 'Areas' worksheet.
+
+        Arguments:
+        ----------
+            * phx_project (project.PhxProject): The PhxProject to write.
+            * clear_stale (bool): Clear filled thermal-bridge rows left below the written
+                block, including when the project has none. Default=False, which only warns.
+        """
 
         thermal_bridges: list[areas_thermal_bridges.ThermalBridgeRow] = []
         for variant in phx_project.variants:
@@ -642,7 +663,7 @@ class PHPPConnection:
         if len(thermal_bridges) >= 100:
             pass
 
-        self.areas.write_thermal_bridges(thermal_bridges)
+        self.areas.write_thermal_bridges(thermal_bridges, clear_stale=clear_stale)
         return None
 
     def write_project_window_surfaces(self, phx_project: project.PhxProject) -> None:

@@ -12,6 +12,7 @@ from ph_units.unit_type import Unit
 from PHX.model.constructions import PhxConstructionOpaque
 from PHX.PHPP.phpp_localization import shape_model
 from PHX.PHPP.phpp_model import uvalues_constructor
+from PHX.PHPP.sheet_io._stale_rows import _cell_has_value, _read_column_with_integrity_guard
 from PHX.PHPP.sheet_io.io_variants import VariantAssemblyLayerName
 from PHX.xl import xl_app, xl_data
 from PHX.xl.xl_data import col_offset
@@ -242,6 +243,7 @@ class UValues:
         """Write a list of ConstructorBlocks to the U-Values worksheet."""
 
         self.clear_all_constructor_data(_clear_name=True)
+        self.clear_section_percentages()
 
         assert len(_const_blocks) <= len(
             self.all_constructor_start_rows
@@ -296,6 +298,26 @@ class UValues:
         """Remove all of the existing input data from all of the constructors in the PHPP."""
         for row_num in self.all_constructor_start_rows:
             self.clear_single_constructor_data(row_num, _clear_name)
+
+    def clear_section_percentages(self) -> None:
+        """Clear every constructor's section-2 / section-3 percentage that holds a value.
+
+        Not part of 'clear_single_constructor_data', whose layer block stops a row above
+        them. A construction writes its percentages only when it has a second or third
+        section, so a single-section construction would otherwise show the share a previous
+        assembly had (PHI's 10.4a Example floor: 2 % for an I-beam). Read in two block
+        reads, so a blank template costs no writes.
+        """
+        rows = self.all_constructor_start_rows
+        if not rows:
+            return
+        for pct in (self.shape.constructor.inputs.sec_2_percentage, self.shape.constructor.inputs.sec_3_percentage):
+            first, last = rows[0] + pct.row, rows[-1] + pct.row
+            data = _read_column_with_integrity_guard(self.xl, self.shape.name, pct.column, first, last)
+            wanted = {row + pct.row for row in rows}
+            for row, value in enumerate(data, start=first):
+                if row in wanted and _cell_has_value(value):
+                    self.xl.clear_range_data(self.shape.name, f"{pct.column}{row}")
 
     # -------------------------------------------------------------------------
 

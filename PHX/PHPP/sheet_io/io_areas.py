@@ -10,6 +10,14 @@ from ph_units.unit_type import Unit
 
 from PHX.PHPP.phpp_localization import shape_model
 from PHX.PHPP.phpp_model import areas_data, areas_surface, areas_thermal_bridges
+from PHX.PHPP.sheet_io._stale_rows import (
+    _cell_has_value,
+    _contiguous_column_groups,
+    _contiguous_row_groups,
+    _format_stale_rows,
+    _range_address,
+    _read_column_with_integrity_guard,
+)
 from PHX.xl import xl_app, xl_data
 from PHX.xl.xl_data import col_offset
 
@@ -245,6 +253,7 @@ class ThermalBridges:
         self.shape = _shape
         self._section_header_row: int | None = None
         self._section_first_entry_row: int | None = None
+        self._section_last_entry_row: int | None = None
 
     @property
     def section_header_row(self) -> int:
@@ -257,6 +266,29 @@ class ThermalBridges:
         if not self._section_first_entry_row:
             self._section_first_entry_row = self.find_section_first_entry_row()
         return self._section_first_entry_row
+
+    @property
+    def section_last_entry_row(self) -> int:
+        """Return the row number of the last user-input entry row in the 'Thermal Bridge input' section."""
+        if not self._section_last_entry_row:
+            self._section_last_entry_row = self.find_section_last_entry_row()
+        return self._section_last_entry_row
+
+    def find_section_last_entry_row(self) -> int:
+        """Return the last row of the entry block: the row before the 'No.' counter stops being a number."""
+        start = self.section_first_entry_row
+        xl_data = self.xl.get_single_column_data(
+            _sheet_name=self.shape.name,
+            _col=self.shape.thermal_bridge_rows.locator_col_entry,
+            _row_start=start,
+            _row_end=start + 500,
+        )
+        for i, val in enumerate(xl_data, start=start):
+            try:
+                int(val)  # type: ignore
+            except (TypeError, ValueError):
+                return i - 1
+        return start + 500
 
     def find_section_header_row(self, _row_start: int = 100, _row_end: int = 500) -> int:
         """Return the row number of the 'Thermal Bridge input' section header."""
@@ -320,19 +352,124 @@ class Areas:
         self.surfaces = Surfaces(self.xl, self.shape, self.group_type_exposures)
         self.thermal_bridges = ThermalBridges(self.xl, self.shape)
 
-    def write_thermal_bridges(self, _tbs: list[areas_thermal_bridges.ThermalBridgeRow]) -> None:
-        """Write all of the the thermal bridge data to the PHPP Areas worksheet."""
+    def write_thermal_bridges(
+        self, _tbs: list[areas_thermal_bridges.ThermalBridgeRow], *, clear_stale: bool = False
+    ) -> None:
+        """Write all of the the thermal bridge data to the PHPP Areas worksheet.
+
+        Blanks a template's subtraction length on the rows written (PHPP takes it off the
+        length PHX writes). Warns if filled rows remain below the written block - including
+        when there are no thermal bridges to write at all; pass clear_stale=True to blank
+        those rows' input columns as well.
+        """
+        inputs = self.shape.thermal_bridge_rows.inputs
         start = self.thermal_bridges.section_first_entry_row
         row_items = [tb.create_xl_items(self.shape.name, _row_num=i) for i, tb in enumerate(_tbs, start=start)]
         for item in xl_data.merge_xl_item_rows(row_items):
             self.xl.write_xl_item(item)
+        self._blank_template_inputs(inputs, ("subtraction_length",), start, start + len(row_items) - 1)
+        self._warn_or_clear_stale_rows(
+            "Thermal bridge input",
+            inputs,
+            start + len(row_items),
+            self.thermal_bridges.section_last_entry_row,
+            clear_stale,
+        )
 
-    def write_surfaces(self, _surfaces: list[areas_surface.SurfaceRow]) -> None:
-        """Write all of the the surface data to the PHPP Areas worksheet."""
+    def write_surfaces(self, _surfaces: list[areas_surface.SurfaceRow], *, clear_stale: bool = False) -> None:
+        """Write all of the the surface data to the PHPP Areas worksheet.
+
+        Blanks a template's a / b dimensions and user-defined subtraction on the rows written:
+        PHPP sums a row as quantity x (a x b + area - subtraction), so a leftover a x b is added
+        to the area PHX writes. Warns if filled rows remain below the written block; pass
+        clear_stale=True to blank those rows' input columns as well.
+        """
+        inputs = self.shape.surface_rows.inputs
         start = self.surfaces.section_first_entry_row
         row_items = [srf.create_xl_items(self.shape.name, _row_num=i) for i, srf in enumerate(_surfaces, start=start)]
         for item in xl_data.merge_xl_item_rows(row_items):
             self.xl.write_xl_item(item)
+        self._blank_template_inputs(
+            inputs, ("dimension_a", "dimension_b", "subtraction_area"), start, start + len(row_items) - 1
+        )
+        self._warn_or_clear_stale_rows(
+            "Area input",
+            inputs,
+            start + len(row_items),
+            self.surfaces.section_last_entry_row,
+            clear_stale,
+        )
+
+    def _typed_cells(self, _column: str, _row_start: int, _row_end: int) -> list[int]:
+        """Rows in the range whose cell in the column holds a typed value - not empty, not a formula.
+
+        A formula is PHPP's own (easyPH's kitchen-exhaust thermal bridge takes its quantity
+        from 'easyPH!O135'), so it is never reported or cleared. The formula check runs only
+        on the cells that read as filled, which on a blank template is none of them.
+        """
+        if _row_start > _row_end:
+            return []
+        data = _read_column_with_integrity_guard(self.xl, self.shape.name, _column, _row_start, _row_end)
+        return [
+            row
+            for row, value in enumerate(data, start=_row_start)
+            if _cell_has_value(value) and not self.xl.cell_has_formula(self.shape.name, f"{_column}{row}")
+        ]
+
+    def _clear_cells(self, _column: str, _rows: list[int]) -> None:
+        for row_start, row_end in _contiguous_row_groups(_rows):
+            self.xl.clear_range_data(self.shape.name, _range_address(_column, _column, row_start, row_end))
+
+    def _blank_template_inputs(
+        self,
+        _inputs: shape_model.AreasSurfaceInputs | shape_model.AreasThermalBridgeInputs,
+        _field_names: tuple[str, ...],
+        _row_start: int,
+        _row_end: int,
+    ) -> None:
+        """Blank the given inputs on the rows PHX wrote, where a template left a typed value.
+
+        Fields not mapped for the PHPP edition (None) are skipped.
+        """
+        for field_name in _field_names:
+            item = getattr(_inputs, field_name)
+            if item is None or item.column is None:
+                continue
+            self._clear_cells(item.column, self._typed_cells(item.column, _row_start, _row_end))
+
+    def _warn_or_clear_stale_rows(
+        self,
+        _section_name: str,
+        _inputs: shape_model.AreasSurfaceInputs | shape_model.AreasThermalBridgeInputs,
+        _row_start: int,
+        _row_end: int,
+        _clear_stale: bool,
+    ) -> None:
+        """Warn about, and optionally clear, filled rows left below the written block.
+
+        A row is stale when its quantity holds a typed value. Without one PHPP does not
+        count the row; with one it does, whatever building it came from.
+        """
+        stale_rows = self._typed_cells(str(_inputs.quantity.column), _row_start, _row_end)
+        if not stale_rows:
+            return
+
+        self.xl.output(
+            f"Warning: '{self.shape.name}' worksheet {_section_name} section contains stale "
+            f"{_format_stale_rows(stale_rows)}. These are leftover entries from a previous export "
+            "or the template's example building, and PHPP still counts them."
+        )
+        if not _clear_stale:
+            return
+
+        columns = [
+            item.column
+            for field_name in type(_inputs).model_fields
+            if (item := getattr(_inputs, field_name)) is not None and item.column is not None
+        ]
+        for row_start, row_end in _contiguous_row_groups(stale_rows):
+            for col_start, col_end in _contiguous_column_groups(columns):
+                self.xl.clear_range_data(self.shape.name, _range_address(col_start, col_end, row_start, row_end))
 
     def _create_input_location_object(self, _phpp_model_obj: areas_data.AreasInput) -> AreasInputLocation:
         """Create and setup the AreasInputLocation object with the correct data."""

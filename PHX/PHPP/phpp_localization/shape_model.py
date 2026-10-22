@@ -305,6 +305,13 @@ class AreasSurfaceInputs(BaseModel):
     shading: InputItem
     absorptivity: InputItem
     emissivity: InputItem
+    #: PHPP's own area inputs beside the user-defined area PHX writes. PHPP sums the row as
+    #: quantity x (a x b + area - subtraction), so a template value left in any of these
+    #: changes the surface's area. Mapped only for the editions checked against a workbook;
+    #: None leaves them alone.
+    dimension_a: InputItem | None = None
+    dimension_b: InputItem | None = None
+    subtraction_area: InputItem | None = None
 
 
 class AreasThermalBridgeInputs(BaseModel):
@@ -314,6 +321,8 @@ class AreasThermalBridgeInputs(BaseModel):
     length: InputItem
     psi_value: InputItem
     fRsi_value: InputItem
+    #: PHPP's length is quantity x (length - subtraction); see AreasSurfaceInputs.
+    subtraction_length: InputItem | None = None
 
 
 class AreasThermalBridgeRows(BaseModel):
