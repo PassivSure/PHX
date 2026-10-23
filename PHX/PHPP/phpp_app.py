@@ -666,8 +666,16 @@ class PHPPConnection:
         self.areas.write_thermal_bridges(thermal_bridges, clear_stale=clear_stale)
         return None
 
-    def write_project_window_surfaces(self, phx_project: project.PhxProject) -> None:
-        """Write all of the window surfaces from a PhxProject to the PHPP 'Windows' worksheet."""
+    def write_project_window_surfaces(self, phx_project: project.PhxProject, *, clear_stale: bool = False) -> None:
+        """Write all of the window surfaces from a PhxProject to the PHPP 'Windows' worksheet.
+
+        Arguments:
+        ----------
+            * phx_project (project.PhxProject): The PhxProject to write.
+            * clear_stale (bool): Clear filled window rows left below the written block
+                (a previous export's, or a template's example windows). Default=False,
+                which only warns.
+        """
 
         # -- First, populate the Variant types
         variant_type_names = [
@@ -721,7 +729,7 @@ class PHPPConnection:
             pass
 
         phpp_windows_rows_sorted = sorted(phpp_windows, key=lambda x: x.phx_polygon.display_name.lower())
-        self.windows.write_windows(phpp_windows_rows_sorted)
+        self.windows.write_windows(phpp_windows_rows_sorted, clear_stale=clear_stale)
         return None
 
     def write_project_window_shading(self, phx_project: project.PhxProject) -> None:

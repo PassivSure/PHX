@@ -51,7 +51,7 @@ def write_phx_project_to_phpp(
     phpp_conn.write_project_ground(phx_project, clear_stale=clear_stale)
     phpp_conn.write_project_thermal_bridges(phx_project, clear_stale=clear_stale)
     phpp_conn.write_project_window_components(phx_project, clear_stale=clear_stale)
-    phpp_conn.write_project_window_surfaces(phx_project)
+    phpp_conn.write_project_window_surfaces(phx_project, clear_stale=clear_stale)
     phpp_conn.write_project_window_shading(phx_project)
     phpp_conn.write_project_ventilation_components(phx_project, clear_stale=clear_stale)
     phpp_conn.write_project_ventilators(phx_project, clear_stale=clear_stale)
