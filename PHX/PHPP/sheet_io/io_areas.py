@@ -11,12 +11,12 @@ from ph_units.unit_type import Unit
 from PHX.PHPP.phpp_localization import shape_model
 from PHX.PHPP.phpp_model import areas_data, areas_surface, areas_thermal_bridges
 from PHX.PHPP.sheet_io._stale_rows import (
-    _cell_has_value,
+    _clear_cells,
     _contiguous_column_groups,
     _contiguous_row_groups,
     _format_stale_rows,
     _range_address,
-    _read_column_with_integrity_guard,
+    _typed_cells,
 )
 from PHX.xl import xl_app, xl_data
 from PHX.xl.xl_data import col_offset
@@ -401,24 +401,11 @@ class Areas:
         )
 
     def _typed_cells(self, _column: str, _row_start: int, _row_end: int) -> list[int]:
-        """Rows in the range whose cell in the column holds a typed value - not empty, not a formula.
-
-        A formula is PHPP's own (easyPH's kitchen-exhaust thermal bridge takes its quantity
-        from 'easyPH!O135'), so it is never reported or cleared. The formula check runs only
-        on the cells that read as filled, which on a blank template is none of them.
-        """
-        if _row_start > _row_end:
-            return []
-        data = _read_column_with_integrity_guard(self.xl, self.shape.name, _column, _row_start, _row_end)
-        return [
-            row
-            for row, value in enumerate(data, start=_row_start)
-            if _cell_has_value(value) and not self.xl.cell_has_formula(self.shape.name, f"{_column}{row}")
-        ]
+        """Rows in the range whose cell in the column holds a typed value - not empty, not a formula."""
+        return _typed_cells(self.xl, self.shape.name, _column, _row_start, _row_end)
 
     def _clear_cells(self, _column: str, _rows: list[int]) -> None:
-        for row_start, row_end in _contiguous_row_groups(_rows):
-            self.xl.clear_range_data(self.shape.name, _range_address(_column, _column, row_start, row_end))
+        _clear_cells(self.xl, self.shape.name, _column, _rows)
 
     def _blank_template_inputs(
         self,

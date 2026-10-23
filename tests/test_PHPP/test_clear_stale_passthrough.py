@@ -25,6 +25,7 @@ def test_project_export_forwards_clear_stale_to_list_writers(monkeypatch, clear_
         hbjson_to_phpp.write_phx_project_to_phpp(connection, phx_project)
 
     connection.write_project_window_components.assert_called_once_with(phx_project, clear_stale=clear_stale)
+    connection.write_project_window_surfaces.assert_called_once_with(phx_project, clear_stale=clear_stale)
     connection.write_project_ventilation_components.assert_called_once_with(phx_project, clear_stale=clear_stale)
     connection.write_project_ventilators.assert_called_once_with(phx_project, clear_stale=clear_stale)
     connection.write_project_vent_ducting.assert_called_once_with(phx_project, clear_stale=clear_stale)
@@ -53,6 +54,8 @@ def _phpp_connection() -> phpp_app.PHPPConnection:
     connection.xl = SimpleNamespace(output=Mock())
     connection.components = Mock()
     connection.addnl_vent = Mock()
+    connection.variants = Mock()
+    connection.windows = Mock()
     return connection
 
 
@@ -67,6 +70,7 @@ def test_phpp_app_forwards_clear_stale_to_sheet_writers(reset_class_counters, cl
     connection.write_project_ventilators(phx_project, **kwargs)
     connection.write_project_vent_ducting(phx_project, **kwargs)
     connection.write_project_spaces(phx_project, **kwargs)
+    connection.write_project_window_surfaces(phx_project, **kwargs)
 
     connection.components.write_glazings.assert_called_once_with([], clear_stale=clear_stale)
     connection.components.write_frames.assert_called_once_with([], clear_stale=clear_stale)
@@ -77,6 +81,7 @@ def test_phpp_app_forwards_clear_stale_to_sheet_writers(reset_class_counters, cl
     assert connection.addnl_vent.write_vent_ducts.call_args.kwargs == {"clear_stale": clear_stale}
     assert len(connection.addnl_vent.write_vent_ducts.call_args.args[0]) == 1
     connection.addnl_vent.write_spaces.assert_called_once_with([], clear_stale=clear_stale)
+    connection.windows.write_windows.assert_called_once_with([], clear_stale=clear_stale)
 
 
 @pytest.mark.parametrize(

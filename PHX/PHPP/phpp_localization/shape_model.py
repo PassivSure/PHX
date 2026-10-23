@@ -560,6 +560,14 @@ class WindowWindowRowsColumns(BaseModel):
     comfort_exempt: InputItem
     comfort_temp: InputItem
     variant_input: InputItem
+    #: The outer-frame length inputs (threshold, fixed glazing, mullion and transom lengths,
+    #: glass carriers) between the casement lengths PHPP derives and psi-install. A modeller
+    #: types or writes a formula here; PHPP leaves them empty on an unused row and checks
+    #: each against the frame the row selects. PHX writes none of them, so a template's
+    #: example window leaves its own. Mapped only for the editions checked against a
+    #: workbook; None leaves them alone.
+    frame_lengths_first: InputItem | None = None
+    frame_lengths_last: InputItem | None = None
 
 
 class WindowWindowRows(BaseModel):

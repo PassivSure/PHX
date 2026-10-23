@@ -86,3 +86,26 @@ def _read_column_with_integrity_guard(
         return list(data)
 
     return [_xl.get_data(_sheet_name, f"{_col}{row}") for row in range(_row_start, _row_end + 1)]
+
+
+def _typed_cells(_xl: xl_app.XLConnection, _sheet_name: str, _column: str, _row_start: int, _row_end: int) -> list[int]:
+    """Rows in the range whose cell in the column holds a typed value - not empty, not a formula.
+
+    A formula is PHPP's own (easyPH's kitchen-exhaust thermal bridge takes its quantity
+    from 'easyPH!O135'), so it is never reported or cleared. The formula check runs only
+    on the cells that read as filled, which on a blank template is none of them.
+    """
+    if _row_start > _row_end:
+        return []
+    data = _read_column_with_integrity_guard(_xl, _sheet_name, _column, _row_start, _row_end)
+    return [
+        row
+        for row, value in enumerate(data, start=_row_start)
+        if _cell_has_value(value) and not _xl.cell_has_formula(_sheet_name, f"{_column}{row}")
+    ]
+
+
+def _clear_cells(_xl: xl_app.XLConnection, _sheet_name: str, _column: str, _rows: list[int]) -> None:
+    """Clear the column's cells on the given rows, one range per contiguous run."""
+    for row_start, row_end in _contiguous_row_groups(sorted(_rows)):
+        _xl.clear_range_data(_sheet_name, _range_address(_column, _column, row_start, row_end))

@@ -993,6 +993,12 @@
                 },
                 "variant_input": {
                     "column": "F"
+                },
+                "frame_lengths_first": {
+                    "column": "AA"
+                },
+                "frame_lengths_last": {
+                    "column": "AM"
                 }
             }
         },

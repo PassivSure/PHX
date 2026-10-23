@@ -17,6 +17,7 @@ from PHX.PHPP.phpp_app import PHPPConnection
 from PHX.PHPP.sheet_io.io_areas import Areas
 from PHX.PHPP.sheet_io.io_ground import Ground
 from PHX.PHPP.sheet_io.io_u_values import UValues
+from PHX.PHPP.sheet_io.io_windows import Windows
 from PHX.xl import xl_data
 from PHX.xl.xl_app import XLConnection
 from tests.test_PHPP.test_sheet_io.conftest import load_shape
@@ -267,3 +268,153 @@ def test_nothing_selected_means_nothing_written(clear_stale):
 
     assert fake_xl.written_state().get("Ground", {}) == {}
     assert not any(_.startswith("Warning") for _ in outputs)
+
+
+# -----------------------------------------------------------------------------
+# -- Windows: the outer-frame lengths and the rows below the written block
+
+WINDOWS = "Windows"
+
+
+def _windows_seed(**cells) -> dict:
+    # -- Entry rows 23..39: 'Quan-' two rows above the first, the 'Unhide additional rows'
+    # -- note one below the last. PHPP derives the left casement (W = S - AB) on every row.
+    seed = {"L21": "Quan-\ntity", "L40": "Unhide additional rows for data entry"}
+    seed.update({f"W{row}": f"=S{row}-AB{row}" for row in range(23, 40)})
+    seed.update(cells)
+    return seed
+
+
+def _example_window(row: int, name: str) -> dict:
+    # -- As in PHI's Example: a fixed light the full height (AB = S) and half-width
+    # -- threshold, transom and bottom-fixed lengths, typed or as formulas.
+    return {
+        f"L{row}": 2,
+        f"N{row}": name,
+        f"R{row}": 2.24,
+        f"S{row}": 2.55,
+        f"T{row}": "1-External wall south",
+        f"U{row}": "01ud-Triple-low-e",
+        f"V{row}": "01ud-Wooden frame",
+        f"AA{row}": f"=R{row}/2",
+        f"AB{row}": f"=S{row}",
+        f"AE{row}": 1.12,
+        f"AM{row}": 2,
+        f"AN{row}": 1,
+    }
+
+
+def _windows(_seed: dict, _shape_filename: str = "EN_10_4A.json"):
+
+    shape = load_shape(_shape_filename)
+    fake_xl = FakeXLFramework(sheet_names=[WINDOWS], seed={WINDOWS: _seed})
+    outputs: list[str] = []
+    connection = XLConnection(xl_framework=fake_xl, output=outputs.append)
+    cleared = _spy_on_clears(connection)
+    return SimpleNamespace(fake_xl=fake_xl, cleared=cleared), Windows(connection, shape.WINDOWS), outputs
+
+
+class _WindowRow:
+    """Stands in for a WindowRow: writes a quantity, a description and a size."""
+
+    def __init__(self, _name: str):
+        self.name = _name
+
+    def create_xl_items(self, _sheet_name: str, _row_num: int) -> list[xl_data.XlItem]:
+        return [
+            xl_data.XlItem(_sheet_name, f"L{_row_num}", 1),
+            xl_data.XlItem(_sheet_name, f"N{_row_num}", self.name),
+            xl_data.XlItem(_sheet_name, f"R{_row_num}", 1.0),
+            xl_data.XlItem(_sheet_name, f"S{_row_num}", 1.5),
+        ]
+
+
+def test_the_window_section_ends_above_phpps_note():
+    _, windows, _ = _windows(_windows_seed())
+
+    assert (windows.first_entry_row, windows.section_last_entry_row) == (23, 39)
+
+
+def test_a_written_window_row_loses_the_templates_frame_lengths():
+    # -- AB = S on the Example's row made our window all fixed light: no left casement at all.
+    run, windows, _ = _windows(_windows_seed(**_example_window(23, "2.01 Floor-to-ceiling")))
+
+    windows.write_windows([_WindowRow("Our window")])
+
+    assert {"AA23", "AB23", "AE23", "AM23"} <= run.cleared
+    assert "W23" not in run.cleared  # -- PHPP's derived casement stays
+    assert "AN23" not in run.cleared  # -- PHX writes psi-install itself
+
+
+def test_a_frame_length_formula_phpp_keeps_on_unused_rows_is_left_alone():
+    seed = _windows_seed(**_example_window(23, "2.01"))
+    seed.update({f"AC{row}": f"=X{row}*0" for row in range(23, 40)})  # -- PHPP's own, on every row
+
+    run, windows, _ = _windows(seed)
+    windows.write_windows([_WindowRow("Our window")])
+
+    assert not any(cell.startswith("AC") for cell in run.cleared)
+    assert "AB23" in run.cleared  # -- positive control: the Example's own formula beside it goes
+
+
+def test_an_empty_window_template_gets_no_extra_writes():
+    run, windows, outputs = _windows(_windows_seed())
+
+    windows.write_windows([_WindowRow("Our window")])
+
+    assert set(run.fake_xl.written_state().get(WINDOWS, {})) == {"L23", "N23", "R23", "S23"}
+    assert not run.cleared
+    assert not any("stale" in _ for _ in outputs)
+
+
+def test_an_edition_without_the_frame_lengths_mapped_is_not_blanked():
+    run, windows, _ = _windows(_windows_seed(**_example_window(23, "2.01")), "EN_10_3.json")
+
+    windows.write_windows([_WindowRow("Our window")])
+
+    assert not run.cleared
+
+
+def _stale_window_seed() -> dict:
+    seed = _windows_seed(**_example_window(23, "2.01"))
+    seed.update(_example_window(26, "1.03 Floor-to-ceiling"))
+    return seed
+
+
+def test_a_stale_window_row_is_reported_and_kept_by_default():
+    run, windows, outputs = _windows(_stale_window_seed())
+
+    windows.write_windows([_WindowRow("Our window")])
+
+    assert any("stale row 26" in _ for _ in outputs)
+    assert not any(cell.endswith("26") for cell in run.cleared)
+
+
+def test_a_stale_window_row_is_cleared_on_request():
+    run, windows, _ = _windows(_stale_window_seed())
+
+    windows.write_windows([_WindowRow("Our window")], clear_stale=True)
+
+    assert {"L26", "N26", "R26", "S26", "T26", "U26", "V26", "AA26", "AB26", "AE26", "AM26"} <= run.cleared
+    assert "W26" not in run.cleared
+    assert "AN26" not in run.cleared  # -- PHPP's default 1 on every row
+    assert windows.get_all_window_names() == ["Our window"]
+
+
+def test_no_windows_at_all_still_reports_the_templates():
+    run, windows, outputs = _windows(_stale_window_seed())
+
+    windows.write_windows([], clear_stale=True)
+
+    assert any("stale rows 23, 26" in _ for _ in outputs)
+    assert {"L23", "N23", "AB23", "L26", "AB26"} <= run.cleared
+    assert windows.get_all_window_names() == []
+
+
+def test_a_formula_quantity_is_not_a_stale_window():
+    run, windows, outputs = _windows(_windows_seed(L30="=easyPH!O12", N30="Kitchen hood"))
+
+    windows.write_windows([_WindowRow("Our window")], clear_stale=True)
+
+    assert not any("stale" in _ for _ in outputs)
+    assert not any(cell.endswith("30") for cell in run.cleared)

@@ -10,8 +10,19 @@ from ph_units.unit_type import Unit
 
 from PHX.PHPP.phpp_localization import shape_model
 from PHX.PHPP.phpp_model.windows_rows import WindowRow, get_name_from_glazing_id
+from PHX.PHPP.sheet_io._stale_rows import (
+    _cell_has_value,
+    _clear_cells,
+    _format_stale_rows,
+    _read_column_with_integrity_guard,
+    _typed_cells,
+)
 from PHX.xl import xl_app
-from PHX.xl.xl_data import XlItem, col_offset, merge_xl_item_rows
+from PHX.xl.xl_data import XlItem, col_offset, merge_xl_item_rows, xl_chr, xl_ord
+
+# -- The inputs a stale window row is cleared of: what PHX itself writes, less the four
+# -- psi-install fields, whose 1s are PHPP's own defaults on every unused row.
+STALE_ROW_INPUTS = ("variant_input", "quantity", "description", "width", "height", "host", "glazing_id", "frame_id")
 
 
 class Windows:
@@ -44,6 +55,16 @@ class Windows:
         if not self._last_entry_row:
             self._last_entry_row = self.find_last_entry_row()
         return self._last_entry_row
+
+    @property
+    def section_last_entry_row(self) -> int:
+        """The last window-entry row: the one above PHPP's 'Unhide additional rows' note.
+
+        'last_entry_row' is two rows past that note (the read ranges here have always run to
+        it). Those rows carry PHPP's instructions in the quantity column, so the stale-row
+        check must stop above them.
+        """
+        return self.last_entry_row - 3
 
     @property
     def entry_range_start(self) -> str:
@@ -175,14 +196,93 @@ class Windows:
         for item in _window_row.create_xl_items(self.shape.name, _row_num=_row_num):
             self.xl.write_xl_item(item)
 
-    def write_windows(self, _window_rows: list[WindowRow]) -> None:
-        """Write a list of WindowRow objects to the Windows worksheet."""
+    def write_windows(self, _window_rows: list[WindowRow], *, clear_stale: bool = False) -> None:
+        """Write a list of WindowRow objects to the Windows worksheet.
+
+        Blanks a template's outer-frame lengths on the rows written: PHX writes none, and an
+        inherited fixed-glazing length takes its run off the casement PHPP derives from the
+        window size, while an inherited mullion fails PHPP's check against our frame. Warns if
+        filled rows remain below the written block; pass clear_stale=True to blank those
+        rows' inputs as well.
+        """
         start = self.first_entry_row
         row_items = [
             row.create_xl_items(self.shape.name, _row_num=i) for i, row in enumerate(_window_rows, start=start)
         ]
         for item in merge_xl_item_rows(row_items):
             self.xl.write_xl_item(item)
+
+        written_end = start + len(row_items) - 1
+        stale_rows = self._stale_rows(written_end + 1, self.section_last_entry_row)
+        frame_rows = list(range(start, written_end + 1))
+        if clear_stale:
+            frame_rows += stale_rows
+        self._blank_frame_lengths(frame_rows)
+        if stale_rows and clear_stale:
+            for field_name in STALE_ROW_INPUTS:
+                column = str(getattr(self.shape.window_rows.inputs, field_name).column)
+                rows = set(_typed_cells(self.xl, self.shape.name, column, stale_rows[0], stale_rows[-1]))
+                _clear_cells(self.xl, self.shape.name, column, sorted(rows.intersection(stale_rows)))
+
+    def _stale_rows(self, _row_start: int, _row_end: int) -> list[int]:
+        """Warn about the filled rows left below the written block, and return them.
+
+        A row is stale when its quantity holds a typed value. Without one PHPP does not
+        count the window; with one it does, whatever building it came from - and the
+        shading writer reads its description back as one of ours.
+        """
+        quantity_column = str(self.shape.window_rows.inputs.quantity.column)
+        stale_rows = _typed_cells(self.xl, self.shape.name, quantity_column, _row_start, _row_end)
+        if stale_rows:
+            self.xl.output(
+                f"Warning: '{self.shape.name}' worksheet window section contains stale "
+                f"{_format_stale_rows(stale_rows)}. These are leftover entries from a previous export "
+                "or the template's example building, and PHPP still counts them."
+            )
+        return stale_rows
+
+    @property
+    def frame_length_columns(self) -> list[str]:
+        """The outer-frame length columns, or none for an edition that does not map them."""
+        inputs = self.shape.window_rows.inputs
+        if inputs.frame_lengths_first is None or inputs.frame_lengths_last is None:
+            return []
+        first, last = xl_ord(str(inputs.frame_lengths_first.column)), xl_ord(str(inputs.frame_lengths_last.column))
+        return [xl_chr(i) for i in range(first, last + 1)]
+
+    def _blank_frame_lengths(self, _rows: list[int]) -> None:
+        """Blank whatever a template left in the outer-frame lengths on the given rows.
+
+        Unlike the Areas inputs, a formula here is not proof that PHPP owns the cell: the
+        Example's frame lengths are formulas ('AB24 = =S24', a fixed light the full height).
+        So each column is calibrated against the rows no window occupies (empty quantity),
+        where whatever is present is PHPP's: a column holding a formula there is left alone
+        on every row. With no unused row to calibrate on, only typed values are cleared.
+        Only cells that read as filled are touched, so a blank template gets no writes.
+        """
+        if not _rows or not (columns := self.frame_length_columns):
+            return
+        first, last = self.first_entry_row, self.section_last_entry_row
+        quantity_column = str(self.shape.window_rows.inputs.quantity.column)
+        quantities = _read_column_with_integrity_guard(self.xl, self.shape.name, quantity_column, first, last)
+        unused_rows = {row for row, value in enumerate(quantities, start=first) if not _cell_has_value(value)}
+        targets = set(_rows)
+
+        for column in columns:
+            data = _read_column_with_integrity_guard(self.xl, self.shape.name, column, first, last)
+            filled = {row for row, value in enumerate(data, start=first) if _cell_has_value(value)}
+            if not (filled & targets):
+                continue
+            if unused_rows:
+                calibration = sorted(filled & unused_rows)
+                if calibration and self.xl.cell_has_formula(self.shape.name, f"{column}{calibration[0]}"):
+                    continue  # -- PHPP's own formula: never cleared
+                to_clear = filled & targets
+            else:
+                to_clear = {
+                    row for row in filled & targets if not self.xl.cell_has_formula(self.shape.name, f"{column}{row}")
+                }
+            _clear_cells(self.xl, self.shape.name, column, sorted(to_clear))
 
     def get_all_window_names(self) -> list[str]:
         """Return a list of all the window names found in the worksheet."""
